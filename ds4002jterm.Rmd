@@ -5,3 +5,150 @@ date: "2023-01-03"
 output: html_document
 ---
 
+seattle map, demographics/schooling (elem)/factors in area, look at other city datasets,
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Read in Libraries
+```{r}
+library(tidyverse)
+library(caret)
+library(ROCR)
+library(MLmetrics)
+library(mltools)
+library(rpart.plot)
+library(dplyr)
+library(DT)
+```
+
+# Read in Data
+```{r}
+test <- read.csv("C:/Users/allis/Documents/UVA-January 2023/test.csv")
+train <- read.csv("C:/Users/allis/Documents/UVA-January 2023/train.csv")
+View(train)
+```
+
+# Data cleaning
+```{r}
+str(train)
+summary(train)
+table(train$beds)
+table(train$baths)
+table(train$zip_code)
+
+sum(is.na(train$lot_size))
+347/2016 # 17% of our 'train' data
+
+# We assume that the NAs in lot size are apartments
+train$apt <- ifelse(is.na(train$lot_size), 1, 0)
+# make a new column with 0s so we can replace it below
+train$lot_sqft = 0
+# if the lot size units is 'acre', convert to sqft
+train <- train %>% mutate(lot_sqft = ifelse(lot_size_units == "acre", lot_size*43560, lot_size))
+# we're going to drop 'lot_size' and 'lot_size_units' to clean it up
+train = subset(train, select = -c(lot_size, lot_size_units))
+
+# convert beds & zip code & baths to categorical
+train[,c(1, 2, 5)] <- lapply(train[,c(1, 2, 5)] , factor)
+str(train)
+```
+
+# Data visualization/Summary Statistics
+```{r}
+plot(train$beds, train$baths, pch = 19, col = "black", xlab = "Number of Beds", ylab = "Number of Baths", main = "Scatterplot of Beds and Baths in Seattle, WA")
+
+# for each zip code find the mean price
+train %>% group_by(zip_code) %>% 
+  summarise(avg_price=mean(price),
+            .groups = 'drop')
+
+```
+
+# decision tree 80/10/10
+```{r}
+# we're going to combine the test and train data set so we can partition properly for the decision tree
+set.seed(1)
+
+part_index_ds1 <- caret::createDataPartition(ds1$age,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train_ds1 <- ds1[part_index_ds1, ]
+tune_and_test_ds1 <- ds1[-part_index_ds1, ]
+train_ds1
+
+#The we need to use the function again to create the tuning set 
+tune_and_test_index_ds1 <- createDataPartition(tune_and_test_ds1$age,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+
+tune_ds1 <- tune_and_test_ds1[tune_and_test_index_ds1, ]
+test_ds1 <- tune_and_test_ds1[-tune_and_test_index_ds1, ]
+
+
+dim(train_ds1)
+dim(test_ds1) 
+dim(tune_ds1)
+
+
+```
+
+
+## 5. Build your model using the training data, rpart2, and repeated cross validation as reviewed in class with the caret package.
+```{r}
+
+# Choose the features and classes, slightly different approach for caret, need to create features and target sets from the training data.
+
+str(ds1)
+
+features_ds1 <- train_ds1[,-1]#dropping 11 because it's target variable. 
+View(features_ds1)
+target_ds1 <- data_frame(age=train_ds1$age)
+
+str(features_ds1)
+
+str(target_ds1)
+
+#Step 1: Cross validation process-the process by which the training data will be used to build the initial model must be set. As seen below:
+
+fitControl <- trainControl(method = "repeatedcv",
+                          number = 10,
+                          repeats = 10) 
+# number - number of folds
+# repeats - number of times the CV is repeated, takes the average of these repeat rounds
+
+?trainControl
+
+#Step 2: Usually involves setting a hyper-parameter search. This is optional and the hyper-parameters vary by model. Let's take a look at the documentation for the model we are going to use. Same search function as for classification 
+
+tree.grid <- expand.grid(maxdepth=c(3:10))
+
+#  2^(k+1)−1 = maximum number of nodes (splits) when k=depth of the 
+
+# for the tune grid function: https://topepo.github.io/caret/model-training-and-tuning.html
+
+#options for the rpart2: https://topepo.github.io/caret/train-models-by-tag.html#tree-based-model
+
+#Step 3: Train the models
+set.seed(1)
+ds1_mdl_r <- train(x=features_ds1,
+                y=target_ds1$age,
+                method="rpart2",
+                trControl=fitControl,
+                metric="RMSE")
+ds1_mdl_r
+
+ds1_mdl_1_r <- train(x=features_ds1,
+                y=target_ds1$age,
+                method="rpart2",#type of model uses maxdepth to select a model
+                trControl=fitControl,#previously created
+                tuneGrid=tree.grid,#expanded grid
+                metric="RMSE")
+
+
+```
+
