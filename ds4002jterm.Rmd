@@ -20,43 +20,48 @@ library(mltools)
 library(rpart.plot)
 library(dplyr)
 library(DT)
+library(randomForest)
+library(rio)
+library(class)
+library(plotly)
+library(mice)
+library(data.table)
+library(RColorBrewer)
 ```
 
 # Read in Data
 ```{r}
-test <- read.csv("C:/Users/allis/Documents/UVA-January 2023/test.csv")
-train <- read.csv("C:/Users/allis/Documents/UVA-January 2023/train.csv")
-View(train)
+philly <- read.csv("C:/Users/allis/Documents/UVA-January 2023/Properties_philly_Kraggle_v2.csv")
+train <- rbind(test, df)
+
+
+
 ```
 
 # Data cleaning
 ```{r}
-str(train)
-summary(train)
-table(train$beds)
-table(train$baths)
-table(train$zip_code)
+str(philly)
+# Drop address, zillow address, sale date, opening bid, book writ, OPA, attorney, ward, seller, buyer, other, record deed, zillow/rent estimate, tax assessment
+column_index <- tibble(colnames(philly)) 
+View(column_index)
+philly <- philly[,-c(1:4, 6, 7, 9:12, 15, 16, 22:24, 30)]
 
-sum(is.na(train$lot_size))
-347/2016 # 17% of our 'train' data
 
-# We assume that the NAs in lot size are apartments
-train$apt <- ifelse(is.na(train$lot_size), 1, 0)
-# make a new column with 0s so we can replace it below
-train$lot_sqft = 0
-# if the lot size units is 'acre', convert to sqft
-train <- train %>% mutate(lot_sqft = ifelse(lot_size_units == "acre", lot_size*43560, lot_size))
-# we're going to drop 'lot_size' and 'lot_size_units' to clean it up
-train = subset(train, select = -c(lot_size, lot_size_units))
+# rename target variable from sale.price.bid.price
+colnames(philly)[1] = "Sale.Price"
+philly$Sale.Price <- gsub(',','',philly$Sale.Price)
+philly$Sale.Price <- as.numeric(gsub('[$,]', '', philly$Sale.Price))
 
-# convert beds & zip code & baths to categorical
-train[,c(1, 2, 5)] <- lapply(train[,c(1, 2, 5)] , factor)
-str(train)
+str(philly)
+philly[,c(12, 13, 14)] <- lapply(philly[,c(12, 13, 14)], as.factor)
+
 ```
 
 # Data visualization/Summary Statistics
 ```{r}
-plot(train$beds, train$baths, pch = 19, col = "black", xlab = "Number of Beds", ylab = "Number of Baths", main = "Scatterplot of Beds and Baths in Seattle, WA")
+# We still want to see some helpful visualizations, so we'll use a dataset that hasn't been cleaned yet 
+scat <- read.csv("C:/Users/allis/Documents/UVA-January 2023/train.csv")
+plot(scat$beds, scat$baths, pch = 19, col = "black", xlab = "Number of Beds", ylab = "Number of Baths", main = "Scatterplot of Beds and Baths in Seattle, WA")
 
 # for each zip code find the mean price
 train %>% group_by(zip_code) %>% 
@@ -67,61 +72,78 @@ train %>% group_by(zip_code) %>%
 
 # decision tree 80/10/10
 ```{r}
-# we're going to combine the test and train data set so we can partition properly for the decision tree
 set.seed(1)
+philly <- philly[complete.cases(philly), ]
+# that took away 200 of our records
 
-part_index_ds1 <- caret::createDataPartition(ds1$age,
+
+
+abc <- names(select_if(philly, is.factor))
+
+philly_1h <- one_hot(as.data.table(philly),cols=abc,sparsifyNAs = TRUE,naCols = FALSE,dropCols = TRUE,dropUnusedLevels = TRUE)
+
+
+
+set.seed(1)
+part_index_ds1 <- caret::createDataPartition(philly$Sale.Price,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+part_index_ds2 <- caret::createDataPartition(philly_1h$Sale.Price,
                                            times=1,
                                            p = 0.80,
                                            groups=1,
                                            list=FALSE)
 
-train_ds1 <- ds1[part_index_ds1, ]
-tune_and_test_ds1 <- ds1[-part_index_ds1, ]
-train_ds1
+train_ds1 <- philly[part_index_ds1, ]
+train_ds2 <- philly_1h[part_index_ds2, ]
+tune_and_test_ds1 <- philly[-part_index_ds1, ]
+tune_and_test_ds2<- philly_1h[-part_index_ds2, ]
 
 #The we need to use the function again to create the tuning set 
-tune_and_test_index_ds1 <- createDataPartition(tune_and_test_ds1$age,
+tune_and_test_index_ds1 <- createDataPartition(tune_and_test_ds1$Sale.Price,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+tune_and_test_index_ds2 <- createDataPartition(tune_and_test_ds2$Sale.Price,
                                            p = .5,
                                            list = FALSE,
                                            times = 1)
 
 tune_ds1 <- tune_and_test_ds1[tune_and_test_index_ds1, ]
+tune_ds2 <- tune_and_test_ds2[tune_and_test_index_ds2, ]
 test_ds1 <- tune_and_test_ds1[-tune_and_test_index_ds1, ]
-
-
-dim(train_ds1)
-dim(test_ds1) 
-dim(tune_ds1)
-
-
-```
+test_ds2 <- tune_and_test_ds2[-tune_and_test_index_ds2, ]
 
 
 ## 5. Build your model using the training data, rpart2, and repeated cross validation as reviewed in class with the caret package.
-```{r}
 
 # Choose the features and classes, slightly different approach for caret, need to create features and target sets from the training data.
 
-str(ds1)
-
-features_ds1 <- train_ds1[,-1]#dropping 11 because it's target variable. 
+str(philly)
+str(philly_1h)
+features_ds1 <- train_ds1[,-1]#dropping 1 because it's target variable (price)
+features_ds2 <- train_ds2[,-1]
 View(features_ds1)
-target_ds1 <- data_frame(age=train_ds1$age)
+target_ds1 <- data_frame(price=train_ds1$Sale.Price)
+target_ds2 <- data_frame(price=train_ds2$Sale.Price)
+
 
 str(features_ds1)
-
+str(features_ds2)
 str(target_ds1)
+str(target_ds2)
+View(target_ds1)
 
 #Step 1: Cross validation process-the process by which the training data will be used to build the initial model must be set. As seen below:
 
 fitControl <- trainControl(method = "repeatedcv",
                           number = 10,
                           repeats = 10) 
+
 # number - number of folds
 # repeats - number of times the CV is repeated, takes the average of these repeat rounds
-
-?trainControl
 
 #Step 2: Usually involves setting a hyper-parameter search. This is optional and the hyper-parameters vary by model. Let's take a look at the documentation for the model we are going to use. Same search function as for classification 
 
@@ -129,26 +151,158 @@ tree.grid <- expand.grid(maxdepth=c(3:10))
 
 #  2^(k+1)−1 = maximum number of nodes (splits) when k=depth of the 
 
-# for the tune grid function: https://topepo.github.io/caret/model-training-and-tuning.html
-
-#options for the rpart2: https://topepo.github.io/caret/train-models-by-tag.html#tree-based-model
 
 #Step 3: Train the models
 set.seed(1)
 ds1_mdl_r <- train(x=features_ds1,
-                y=target_ds1$age,
+                y=target_ds1$price,
                 method="rpart2",
                 trControl=fitControl,
                 metric="RMSE")
 ds1_mdl_r
+ds2_mdl_r <- train(x=features_ds2,
+                y=target_ds2$price,
+                method="rpart2",
+                trControl=fitControl,
+                metric="RMSE")
+ds2_mdl_r
 
 ds1_mdl_1_r <- train(x=features_ds1,
-                y=target_ds1$age,
+                y=target_ds1$price,
                 method="rpart2",#type of model uses maxdepth to select a model
                 trControl=fitControl,#previously created
                 tuneGrid=tree.grid,#expanded grid
                 metric="RMSE")
 
+ds1_mdl_1_r
+varImp(ds1_mdl_1_r)
+
+ds2_mdl_2_r <- train(x=features_ds2,
+                y=target_ds2$price,
+                method="rpart2",#type of model uses maxdepth to select a model
+                trControl=fitControl,#previously created
+                tuneGrid=tree.grid,#expanded grid
+                metric="RMSE")
+
+ds2_mdl_2_r
+varImp(ds2_mdl_2_r)
+
+# we should put var imp in table format and threshold metrics
+rpart.plot(ds1_mdl_1_r$finalModel, type=4,extra=101)
+rpart.plot(ds2_mdl_2_r$finalModel, type=4,extra=101)
+
+
+#Finds RMSE of our prediction vs actual
+pred_tune <- predict(ds1_mdl_1_r, tune_ds1)
+postResample(pred = pred_tune, obs = tune_ds1$Sale.Price)
+#NRMSE
+range(tune_ds1$Sale.Price)
+185000-5900
+11085.12/179100
+# NRMSE: 0.0619 --> 6.19%
+pred_tune2 <- predict(ds2_mdl_2_r, tune_ds2)
+postResample(pred = pred_tune2, obs = tune_ds2$Sale.Price)
+#NRMSE
+range(tune_ds2$Sale.Price)
+159000-5200
+13810.28/153800
+# NRMSE: 0.0619 --> 8.98%
+
+
+
+pred_test <- predict(ds1_mdl_1_r, test_ds1)
+postResample(pred = pred_test, obs = test_ds1$Sale.Price)
+#NRMSE
+range(test_ds1$Sale.Price)
+233000-6700
+11685.79/226300
+# NRMSE: 0.0516 --> 5.16%
+
 
 ```
 
+
+
+```{r}
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  sqrt(xx)
+}
+
+mytry_tune(philly)
+# 3.6
+
+
+
+# --------------------------------------STARTING RANDOM FOREST ---------------------------------------
+
+str(train_ds1)
+set.seed(99)	
+philly_RF = randomForest(Sale.Price~.,          #<- Formula: response variable ~ predictors.
+                            #   The period means 'use all other variables in the data'.
+                            data=train_ds1,     #<- A data frame with the variables to be used.
+                            #y = train_ds1$Sale.Price,           #<- A response vector. This is unnecessary because we're specifying a response formula.
+                            #subset = NULL,      #<- This is unnecessary because we're using all the rows in the training data set.
+                            #xtest = preds,       #<- This is already defined in the formula by the ".".
+                            #ytest = census_train$income,       #<- This is already defined in the formula by "PREGNANT".
+                            ntree = 500,        #<- Number of trees to grow. This should not be set to too small a number, to ensure that every input row gets classified at least a few times.
+                            mtry = 15,            #<- Number of variables randomly sampled as candidates at each split. Default number for classification is sqrt(# of variables). Default number for regression is (# of variables / 3).
+                            replace = TRUE,      #<- Should sampled data points be replaced.
+                            #classwt = NULL,     #<- Priors of the classes. Use this if you want to specify what proportion of the data SHOULD be in each class. This is relevant if your sample data is not completely representative of the actual population 
+                            #strata = NULL,      #<- Not necessary for our purpose here.
+                            sampsize = 100,      #<- Size of sample to draw each time.
+                            nodesize = 5,        #<- Minimum numbers of data points in terminal nodes.
+                            #maxnodes = NULL,    #<- Limits the number of maximum splits. 
+                            importance = TRUE,   #<- Should importance of predictors be assessed?
+                            #localImp = FALSE,   #<- Should casewise importance measure be computed? (Setting this to TRUE will override importance.)
+                            proximity = FALSE,    #<- Should a proximity measure between rows be calculated?
+                            norm.votes = TRUE,   #<- If TRUE (default), the final result of votes are expressed as fractions. If FALSE, raw vote counts are returned (useful for combining results from different runs).
+                            do.trace = TRUE,     #<- If set to TRUE, give a more verbose output as randomForest is run.
+                            keep.forest = TRUE,  #<- If set to FALSE, the forest will not be retained in the output object. If xtest is given, defaults to FALSE.
+                            keep.inbag = TRUE)   #<- Should an n by ntree matrix be returned that keeps track of which samples are in-bag in which trees? 
+
+
+
+
+
+
+str(train_ds2)
+
+philly_RF1h = randomForest(Sale.Price~.,          #<- Formula: response variable ~ predictors.
+                            #   The period means 'use all other variables in the data'.
+                            data=train_ds2,     #<- A data frame with the variables to be used.
+                            #y = train_ds1$Sale.Price,           #<- A response vector. This is unnecessary because we're specifying a response formula.
+                            #subset = NULL,      #<- This is unnecessary because we're using all the rows in the training data set.
+                            #xtest = preds,       #<- This is already defined in the formula by the ".".
+                            #ytest = census_train$income,       #<- This is already defined in the formula by "PREGNANT".
+                            ntree = 500,        #<- Number of trees to grow. This should not be set to too small a number, to ensure that every input row gets classified at least a few times.
+                            mtry = 15,            #<- Number of variables randomly sampled as candidates at each split. Default number for classification is sqrt(# of variables). Default number for regression is (# of variables / 3).
+                            replace = TRUE,      #<- Should sampled data points be replaced.
+                            #classwt = NULL,     #<- Priors of the classes. Use this if you want to specify what proportion of the data SHOULD be in each class. This is relevant if your sample data is not completely representative of the actual population 
+                            #strata = NULL,      #<- Not necessary for our purpose here.
+                            sampsize = 100,      #<- Size of sample to draw each time.
+                            nodesize = 5,        #<- Minimum numbers of data points in terminal nodes.
+                            #maxnodes = NULL,    #<- Limits the number of maximum splits. 
+                            importance = TRUE,   #<- Should importance of predictors be assessed?
+                            #localImp = FALSE,   #<- Should casewise importance measure be computed? (Setting this to TRUE will override importance.)
+                            proximity = FALSE,    #<- Should a proximity measure between rows be calculated?
+                            norm.votes = TRUE,   #<- If TRUE (default), the final result of votes are expressed as fractions. If FALSE, raw vote counts are returned (useful for combining results from different runs).
+                            do.trace = TRUE,     #<- If set to TRUE, give a more verbose output as randomForest is run.
+                            keep.forest = TRUE,  #<- If set to FALSE, the forest will not be retained in the output object. If xtest is given, defaults to FALSE.
+                            keep.inbag = TRUE)   #<- Should an n by ntree matrix be returned that keeps track of which samples are in-bag in which trees? 
+
+
+#==================================================================================
+
+# Look at the output of the random forest.
+philly_RF
+#% Var explained: 94.1
+
+philly_RF1h
+#
+
+```
+
+
+
+we changed tree value from 500 to 100
