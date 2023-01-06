@@ -5,7 +5,6 @@ date: "2023-01-03"
 output: html_document
 ---
 
-seattle map, demographics/schooling (elem)/factors in area, look at other city datasets,
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -32,10 +31,6 @@ library(RColorBrewer)
 # Read in Data
 ```{r}
 philly <- read.csv("C:/Users/allis/Documents/UVA-January 2023/Properties_philly_Kraggle_v2.csv")
-train <- rbind(test, df)
-
-
-
 ```
 
 # Data cleaning
@@ -80,8 +75,10 @@ philly <- philly[complete.cases(philly), ]
 
 abc <- names(select_if(philly, is.factor))
 
-philly_1h <- one_hot(as.data.table(philly),cols=abc,sparsifyNAs = TRUE,naCols = FALSE,dropCols = TRUE,dropUnusedLevels = TRUE)
+philly$bathrooms <- gsub("-", "NA", philly$bathrooms)
+philly$bedrooms <- gsub("-", "NA", philly$bedrooms)
 
+philly_1h <- one_hot(as.data.table(philly),cols=abc,sparsifyNAs = TRUE,naCols = FALSE,dropCols = TRUE,dropUnusedLevels = TRUE)
 
 
 set.seed(1)
@@ -150,7 +147,7 @@ fitControl <- trainControl(method = "repeatedcv",
 tree.grid <- expand.grid(maxdepth=c(3:10))
 
 #  2^(k+1)−1 = maximum number of nodes (splits) when k=depth of the 
-
+str(features_ds1)
 
 #Step 3: Train the models
 set.seed(1)
@@ -218,7 +215,11 @@ range(test_ds1$Sale.Price)
 11685.79/226300
 # NRMSE: 0.0516 --> 5.16%
 
-
+# Dataframe for tree without expanded grid, comparing 1h vs normal
+cols <- c('Max Depth', 'RMSE','RMSE2', 'Rsquared', 'Rsquared2')
+row1 <- c('1', '28538.27', '28085.70', '0.6778958', '0.6984754')
+row2 <- c('2', '26866.28', '24654.45', '0.7104868', '0.7689007')
+row3 <- c('3', '13481.91', '12653.23', '0.9286027', '0.9391718')
 ```
 
 
@@ -231,7 +232,8 @@ mytry_tune <- function(x){
 
 mytry_tune(philly)
 # 3.6
-
+mytry_tune(philly_1h)
+# 3.7
 
 
 # --------------------------------------STARTING RANDOM FOREST ---------------------------------------
@@ -299,7 +301,7 @@ philly_RF
 #% Var explained: 94.1
 
 philly_RF1h
-#
+#% Var explained: 95.47
 
 ```
 
