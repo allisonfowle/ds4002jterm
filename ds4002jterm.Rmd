@@ -35,10 +35,8 @@ philly <- read.csv("C:/Users/allis/Documents/UVA-January 2023/Properties_philly_
 
 # Data cleaning
 ```{r}
-str(philly)
 # Drop address, zillow address, sale date, opening bid, book writ, OPA, attorney, ward, seller, buyer, other, record deed, zillow/rent estimate, tax assessment
 column_index <- tibble(colnames(philly)) 
-View(column_index)
 philly <- philly[,-c(1:4, 6, 7, 9:12, 15, 16, 22:24, 30)]
 
 
@@ -47,7 +45,9 @@ colnames(philly)[1] = "Sale.Price"
 philly$Sale.Price <- gsub(',','',philly$Sale.Price)
 philly$Sale.Price <- as.numeric(gsub('[$,]', '', philly$Sale.Price))
 
-str(philly)
+#substituting characters with NA to use as factors
+philly$bathrooms <- gsub("-", "NA", philly$bathrooms)
+philly$bedrooms <- gsub("-", "NA", philly$bedrooms)
 philly[,c(12, 13, 14)] <- lapply(philly[,c(12, 13, 14)], as.factor)
 
 ```
@@ -55,12 +55,12 @@ philly[,c(12, 13, 14)] <- lapply(philly[,c(12, 13, 14)], as.factor)
 # Data visualization/Summary Statistics
 ```{r}
 # We still want to see some helpful visualizations, so we'll use a dataset that hasn't been cleaned yet 
-scat <- read.csv("C:/Users/allis/Documents/UVA-January 2023/train.csv")
-plot(scat$beds, scat$baths, pch = 19, col = "black", xlab = "Number of Beds", ylab = "Number of Baths", main = "Scatterplot of Beds and Baths in Seattle, WA")
+scat <- read.csv("C:/Users/allis/Documents/UVA-January 2023/Properties_philly_Kraggle_v2.csv")
+plot(scat$bedrooms, scat$bathrooms, pch = 19, col = "blue", xlab = "Number of Beds", ylab = "Number of Baths", main = "Scatterplot of Beds and Baths in Philedelphia, PA")
 
 # for each zip code find the mean price
-train %>% group_by(zip_code) %>% 
-  summarise(avg_price=mean(price),
+philly %>% group_by(Postal.Code) %>% 
+  summarise(avg_price=mean(Sale.Price),
             .groups = 'drop')
 
 ```
@@ -71,16 +71,11 @@ set.seed(1)
 philly <- philly[complete.cases(philly), ]
 # that took away 200 of our records
 
-
-
 abc <- names(select_if(philly, is.factor))
-
-philly$bathrooms <- gsub("-", "NA", philly$bathrooms)
-philly$bedrooms <- gsub("-", "NA", philly$bedrooms)
-
 philly_1h <- one_hot(as.data.table(philly),cols=abc,sparsifyNAs = TRUE,naCols = FALSE,dropCols = TRUE,dropUnusedLevels = TRUE)
 
 
+#ds1 indicates the dataset that has not been one-hot encoded. ds2 is one-hot encoded
 set.seed(1)
 part_index_ds1 <- caret::createDataPartition(philly$Sale.Price,
                                            times=1,
@@ -118,20 +113,11 @@ test_ds2 <- tune_and_test_ds2[-tune_and_test_index_ds2, ]
 
 # Choose the features and classes, slightly different approach for caret, need to create features and target sets from the training data.
 
-str(philly)
-str(philly_1h)
 features_ds1 <- train_ds1[,-1]#dropping 1 because it's target variable (price)
 features_ds2 <- train_ds2[,-1]
-View(features_ds1)
 target_ds1 <- data_frame(price=train_ds1$Sale.Price)
 target_ds2 <- data_frame(price=train_ds2$Sale.Price)
 
-
-str(features_ds1)
-str(features_ds2)
-str(target_ds1)
-str(target_ds2)
-View(target_ds1)
 
 #Step 1: Cross validation process-the process by which the training data will be used to build the initial model must be set. As seen below:
 
@@ -190,6 +176,7 @@ rpart.plot(ds2_mdl_2_r$finalModel, type=4,extra=101)
 
 
 #Finds RMSE of our prediction vs actual
+#predicted dataset without 1h
 pred_tune <- predict(ds1_mdl_1_r, tune_ds1)
 postResample(pred = pred_tune, obs = tune_ds1$Sale.Price)
 #NRMSE
@@ -197,16 +184,18 @@ range(tune_ds1$Sale.Price)
 185000-5900
 11085.12/179100
 # NRMSE: 0.0619 --> 6.19%
+
+#predicted dataset with 1h
 pred_tune2 <- predict(ds2_mdl_2_r, tune_ds2)
 postResample(pred = pred_tune2, obs = tune_ds2$Sale.Price)
 #NRMSE
 range(tune_ds2$Sale.Price)
 159000-5200
 13810.28/153800
-# NRMSE: 0.0619 --> 8.98%
+# NRMSE: 0.08979 --> 8.98%
 
 
-
+# actual dataset
 pred_test <- predict(ds1_mdl_1_r, test_ds1)
 postResample(pred = pred_test, obs = test_ds1$Sale.Price)
 #NRMSE
@@ -215,11 +204,25 @@ range(test_ds1$Sale.Price)
 11685.79/226300
 # NRMSE: 0.0516 --> 5.16%
 
+
 # Dataframe for tree without expanded grid, comparing 1h vs normal
-cols <- c('Max Depth', 'RMSE','RMSE2', 'Rsquared', 'Rsquared2')
-row1 <- c('1', '28538.27', '28085.70', '0.6778958', '0.6984754')
-row2 <- c('2', '26866.28', '24654.45', '0.7104868', '0.7689007')
-row3 <- c('3', '13481.91', '12653.23', '0.9286027', '0.9391718')
+
+Max_Depth <- c('1', '2', '3')
+RMSE <- c('28601.45', '27249.34', '13714.48')
+RMSE2 <- c('28083.39', '23938.40', '12542.03')
+Rsquared <- c('0.6785758', '0.7062375', '0.9280697')
+Rsquared2 <- c('0.6966192', '0.7822921', '0.9387921')
+df1 <- data.frame(Max_Depth, RMSE, RMSE2, Rsquared, Rsquared2)
+df1
+
+# EXPANDED
+Max_Depth_e <- c('3', '4', '5', '6', '7', '8', '9', '10')
+RMSE_e <- c('19007.68', '16064.10', '14461.09', '13407.70', '13352.81', '13352.81', '13352.81', '13352.81')
+RMSE2_e <- c('18821.43', '15604.80', '13384.98', '12929.44', '12876.00', '12876.00', '12876.00', '12876.00')
+Rsquared_e <- c('0.8650238', '0.9001380', '0.9198414', '0.9313778', '0.9313778', '0.9313778', '0.9313778', '0.9313778')
+Rsquared2_e <- c('0.8649066', '0.9057865', '0.9316122', '0.9360844', '0.9364067', '0.9364067', '0.9364067', '0.9364067')
+df2 <- data.frame(Max_Depth_e, RMSE_e, RMSE2_e, Rsquared_e, Rsquared2_e)
+df2
 ```
 
 
@@ -237,7 +240,6 @@ mytry_tune(philly_1h)
 
 
 # --------------------------------------STARTING RANDOM FOREST ---------------------------------------
-
 str(train_ds1)
 set.seed(99)	
 philly_RF = randomForest(Sale.Price~.,          #<- Formula: response variable ~ predictors.
@@ -265,10 +267,6 @@ philly_RF = randomForest(Sale.Price~.,          #<- Formula: response variable ~
 
 
 
-
-
-
-str(train_ds2)
 
 philly_RF1h = randomForest(Sale.Price~.,          #<- Formula: response variable ~ predictors.
                             #   The period means 'use all other variables in the data'.
@@ -298,13 +296,48 @@ philly_RF1h = randomForest(Sale.Price~.,          #<- Formula: response variable
 
 # Look at the output of the random forest.
 philly_RF
-#% Var explained: 94.1
+#% Var explained: 94.44
 
 philly_RF1h
 #% Var explained: 95.47
 
 ```
 
+
+
+
+
+```{r}
+ggplot(philly, aes(x=Sheriff.Cost, y=Sale.Price)) +
+  geom_point(size=2, shape=20, color='red') +
+  geom_smooth(method=lm, se=FALSE) +
+  labs(title = 'Correlation Between Sale Price & Sherriff Cost in Philadelphia') +
+  xlab('Sherriff Cost') +
+  ylab('Sale Price') +
+  ylim(-10000, 325000)
+
+
+vi <- varImp(ds1_mdl_1_r)
+vi
+typeof(vi)
+vi2 <- do.call(rbind.data.frame, vi)
+vi2 <- cbind(variable = rownames(vi2), vi2)
+rownames(vi2) <- 1:nrow(vi2)
+vi2 <- vi2[-c(14,15),]
+vi2$Overall <- as.numeric(vi2$Overall)
+vi2$variable <- gsub('importance.', '', vi2$variable)
+vi2$Overall <- vi2[order(-vi2$Overall),]
+
+ggplot(vi2, aes(x=Overall$variable, y=Overall$Overall)) +
+  geom_bar(stat='identity', color="purple") +
+  labs(title ="Variable Importance of Original Dataset") +
+  ylab("Importance Percentage") +
+  xlab("Variable") +
+  theme_classic()+
+  coord_flip()
+
+
+```
 
 
 we changed tree value from 500 to 100
